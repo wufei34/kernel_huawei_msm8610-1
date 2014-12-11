@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -79,7 +79,6 @@
 #define CSR_SCAN_RETURN_AFTER_EITHER_BAND_11d_FOUND ( CSR_SCAN_RETURN_AFTER_5_BAND_11d_FOUND | CSR_SCAN_RETURN_AFTER_24_BAND_11d_FOUND )
 #define CSR_NUM_RSSI_CAT        15
 #define CSR_MAX_STATISTICS_REQ        10
-#define CSR_ROAM_SCAN_CHANNEL_SWITCH_TIME        3
 
 //Support for multiple session
 #define CSR_SESSION_ID_INVALID    0xFF   // session ID invalid
@@ -93,11 +92,6 @@
     (sessionId < CSR_ROAM_SESSION_MAX) ? \
      (&(pMac)->roam.roamSession[(sessionId)]) :\
      NULL \
-)
-
-#define CSR_IS_SELECT_5GHZ_MARGIN( pMac ) \
-( \
-   (((pMac)->roam.configParam.nSelect5GHzMargin)?eANI_BOOLEAN_TRUE:eANI_BOOLEAN_FALSE) \
 )
 
 #if  defined (WLAN_FEATURE_VOWIFI_11R) || defined (FEATURE_WLAN_CCX) || defined(FEATURE_WLAN_LFR)
@@ -411,8 +405,6 @@ typedef struct tagScanCmd
         tCsrScanRequest   scanRequest;
         tCsrBGScanRequest bgScanRequest;
     }u;
-    //This flag will be set while aborting the scan due to band change
-    tANI_BOOLEAN            abortScanDueToBandChange;
 }tScanCmd;
 
 typedef struct tagRoamCmd
@@ -670,9 +662,6 @@ typedef struct tagCsrConfig
      */
     tANI_BOOLEAN enableHeartBeatOffload;
     tANI_U8 isAmsduSupportInAMPDU;
-    tANI_U8 nSelect5GHzMargin;
-    tANI_BOOLEAN sendDeauthBeforeCon;
-    tANI_BOOLEAN initialScanSkipDFSCh;
 }tCsrConfig;
 
 typedef struct tagCsrChannelPowerInfo
@@ -783,9 +772,6 @@ typedef struct tagCsrScanStruct
     tDblLinkList scanCmdPendingList;
 #endif
     tCsrChannel occupiedChannels;   //This includes all channels on which candidate APs are found
-    tANI_S8     inScanResultBestAPRssi;
-
-    csrScanCompleteCallback callback11dScanDone;
 }tCsrScanStruct;
 
 #ifdef FEATURE_WLAN_TDLS_INTERNAL
@@ -912,11 +898,8 @@ typedef struct tagCsrRoamSession
     tANI_U32 nWapiRspIeLength;    //the byte count for pWapiRspIE
     tANI_U8 *pWapiRspIE;  //this contain the WAPI IE in beacon/probe rsp
 #endif /* FEATURE_WLAN_WAPI */
-    tANI_U32 nAddIEScanLength;  //length of addIeScan
-    /* This contains the additional IE in (unicast)
-     *  probe request at the time of join
-     */
-    tANI_U8 addIEScan[SIR_MAC_MAX_IE_LENGTH+2];
+    tANI_U32 nAddIEScanLength;  //the byte count of pAddIeScanIE;
+    tANI_U8 *pAddIEScan; //this contains the additional IE in (unicast) probe request at the time of join
     tANI_U32 nAddIEAssocLength;      //the byte count for pAddIeAssocIE
     tANI_U8 *pAddIEAssoc; //this contains the additional IE in (re) assoc request
 
@@ -939,8 +922,6 @@ typedef struct tagCsrRoamSession
     tBkidCandidateInfo BkidCandidateInfo[CSR_MAX_BKID_ALLOWED];
 #endif
     tANI_BOOLEAN fWMMConnection;
-    tANI_BOOLEAN fQOSConnection;
-
 #ifdef FEATURE_WLAN_BTAMP_UT_RF
     //To retry a join later when it fails if so desired
     vos_timer_t hTimerJoinRetry;
@@ -1018,7 +999,6 @@ typedef struct tagCsrRoamStruct
     tANI_U8        RoamRssiDiff;
     tANI_BOOLEAN   isWESModeEnabled;
 #endif
-    tANI_U32 deauthRspStatus;
 }tCsrRoamStruct;
 
 
@@ -1147,7 +1127,10 @@ void csrScanSuspendIMPS( tpAniSirGlobal pMac );
 void csrScanResumeIMPS( tpAniSirGlobal pMac );
 
 eHalStatus csrInitGetChannels(tpAniSirGlobal pMac);
-eHalStatus csrScanFilterResults(tpAniSirGlobal pMac);
+// Getting the 5GHz Channel list
+eHalStatus csrGet5GChannels(tpAniSirGlobal pMac);
+// Getting the 2.4GHz Channel list
+eHalStatus csrGet24GChannels(tpAniSirGlobal pMac);
 
 eHalStatus csrSetModifyProfileFields(tpAniSirGlobal pMac, tANI_U32 sessionId,
                                      tCsrRoamModifyProfileFields *pModifyProfileFields);
@@ -1313,21 +1296,6 @@ eHalStatus csrMsgProcessor( tpAniSirGlobal pMac,  void *pMsgBuf );
     \return eHalStatus
   -------------------------------------------------------------------------------*/
 eHalStatus csrOpen(tpAniSirGlobal pMac);
-
-/* ---------------------------------------------------------------------------
-    \fn csrInitChannels
-    \brief This function must be called to initialize CSR channel lists
-    \return eHalStatus
-  -------------------------------------------------------------------------------*/
-eHalStatus csrInitChannels(tpAniSirGlobal pMac);
-
-/* ---------------------------------------------------------------------------
-    \fn csrInitChannelsForCC
-    \brief This function must be called to issue reg hint
-    \return eHalStatus
-  -------------------------------------------------------------------------------*/
-eHalStatus csrInitChannelsForCC(tpAniSirGlobal pMac);
-
 /* ---------------------------------------------------------------------------
     \fn csrClose
     \brief To close down CSR module. There should not be any API call into CSR after calling this function.
@@ -1345,7 +1313,7 @@ eHalStatus csrStart(tpAniSirGlobal pMac);
     \brief To stop CSR. CSR still keeps its current setting.
     \return eHalStatus
   -------------------------------------------------------------------------------*/
-eHalStatus csrStop(tpAniSirGlobal pMac, tHalStopType stopType);
+eHalStatus csrStop(tpAniSirGlobal pMac);
 /* ---------------------------------------------------------------------------
     \fn csrReady
     \brief To let CSR is ready to operate
@@ -1400,11 +1368,8 @@ tANI_BOOLEAN csrIsSetKeyAllowed(tpAniSirGlobal pMac, tANI_U32 sessionId);
 void csrSetOppositeBandChannelInfo( tpAniSirGlobal pMac );
 void csrConstructCurrentValidChannelList( tpAniSirGlobal pMac, tDblLinkList *pChannelSetList,
                                             tANI_U8 *pChannelList, tANI_U8 bSize, tANI_U8 *pNumChannels );
-
-#ifdef FEATURE_WLAN_SCAN_PNO
 eHalStatus csrScanSavePreferredNetworkFound(tpAniSirGlobal pMac,
             tSirPrefNetworkFoundInd *pPrefNetworkFoundInd);
-#endif //FEATURE_WLAN_SCAN_PNO
 #endif
 
 #ifdef WLAN_FEATURE_VOWIFI_11R

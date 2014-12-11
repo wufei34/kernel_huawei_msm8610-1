@@ -66,13 +66,6 @@
 #define IS_24G_CH(__chNum) ((__chNum > 0) && (__chNum < 14))
 #define IS_5G_CH(__chNum) ((__chNum >= 36) && (__chNum <= 165))
 
-#define SIZE_OF_FIXED_PARAM 12
-#define SIZE_OF_TAG_PARAM_NUM 1
-#define SIZE_OF_TAG_PARAM_LEN 1
-#define RSNIEID 0x30
-#define RSNIE_CAPABILITY_LEN 2
-#define DEFAULT_RSNIE_CAP_VAL 0x00
-
 typedef struct sSirCountryInformation
 {
     tANI_U8 countryString[COUNTRY_STRING_LENGTH];
@@ -285,30 +278,6 @@ typedef struct sSirAssocRsp
 #endif
 } tSirAssocRsp, *tpSirAssocRsp;
 
-#if defined(FEATURE_WLAN_CCX_UPLOAD)
-// Structure to hold CCX Beacon report mandatory IEs
-typedef struct sSirCcxBcnReportMandatoryIe
-{
-    tSirMacSSid           ssId;
-    tSirMacRateSet        supportedRates;
-    tSirMacFHParamSet     fhParamSet;
-    tSirMacDsParamSetIE   dsParamSet;
-    tSirMacCfParamSet     cfParamSet;
-    tSirMacIBSSParams     ibssParamSet;
-    tSirMacTim            tim;
-    tSirMacRRMEnabledCap  rmEnabledCapabilities;
-
-    tANI_U8               ssidPresent;
-    tANI_U8               suppRatesPresent;
-    tANI_U8               fhParamPresent;
-    tANI_U8               dsParamsPresent;
-    tANI_U8               cfPresent;
-    tANI_U8               ibssParamPresent;
-    tANI_U8               timPresent;
-    tANI_U8               rrmPresent;
-} tSirCcxBcnReportMandatoryIe, *tpSirCcxBcnReportMandatoryIe;
-#endif /* FEATURE_WLAN_CCX_UPLOAD */
-
 tANI_U8
 sirIsPropCapabilityEnabled(struct sAniSirGlobal *pMac, tANI_U32 bitnum);
 
@@ -403,15 +372,6 @@ sirParseBeaconIE(struct sAniSirGlobal *pMac,
                  tpSirProbeRespBeacon   pBeaconStruct,
                  tANI_U8                    *pPayload,
                  tANI_U32                    payloadLength);
-
-#if defined(FEATURE_WLAN_CCX_UPLOAD)
-tSirRetStatus
-sirFillBeaconMandatoryIEforCcxBcnReport(tpAniSirGlobal    pMac,
-                                        tANI_U8          *pPayload,
-                                        const tANI_U32    payloadLength,
-                                        tANI_U8         **outIeBuf,
-                                        tANI_U32         *pOutIeLen);
-#endif /* FEATURE_WLAN_CCX_UPLOAD */
 
 tSirRetStatus
 sirConvertBeaconFrame2Struct(struct sAniSirGlobal *pMac,
@@ -902,8 +862,3 @@ PopulateDot11fWiderBWChanSwitchAnn(tpAniSirGlobal pMac,
                                    tDot11fIEWiderBWChanSwitchAnn *pDot11f,
                                    tpPESession psessionEntry);
 #endif
-
-tSirRetStatus ValidateAndRectifyIEs(tpAniSirGlobal pMac,
-                                    tANI_U8 *pMgmtFrame,
-                                    tANI_U32 nFrameBytes,
-                                    tANI_U32 *nMissingRsnBytes);

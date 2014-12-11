@@ -135,11 +135,7 @@ rrmGetMgmtTxPower ( tpAniSirGlobal pMac, tpPESession pSessionEntry )
    PELOGE(limLog( pMac, LOGE, "RrmGetMgmtTxPower called" );)
 #endif
    if( pSessionEntry == NULL )
-   {
-      limLog( pMac, LOG3, "%s: txpower from rrmPEContext: %d",
-                     __func__, pMac->rrm.rrmPEContext.txMgmtPower);
       return pMac->rrm.rrmPEContext.txMgmtPower;
-   }
    
    return pSessionEntry->txMgmtPower;
 }
@@ -230,7 +226,7 @@ rrmSetMaxTxPowerRsp ( tpAniSirGlobal pMac, tpSirMsgQ limMsgQ )
    tANI_U8  sessionId, i;
    tSirMacAddr bssid = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-   if( vos_mem_compare(bssid, pMaxTxParams->bssId, sizeof(tSirMacAddr)))
+   if( palEqualMemory(pMac->hHdd, bssid, pMaxTxParams->bssId, sizeof(tSirMacAddr)))
    {
       for (i =0;i < pMac->lim.maxBssId;i++)
       {
@@ -562,7 +558,6 @@ rrmProcessBeaconReportReq( tpAniSirGlobal pMac,
    tANI_U16 measDuration, maxMeasduration;
    tANI_S8  maxDuration;
    tANI_U8  sign;
-   tANI_U16 index;
 
    if( pBeaconReq->measurement_request.Beacon.BeaconReporting.present && 
        (pBeaconReq->measurement_request.Beacon.BeaconReporting.reportingCondition != 0) )
@@ -642,7 +637,7 @@ rrmProcessBeaconReportReq( tpAniSirGlobal pMac,
    }
 
    //Prepare the request to send to SME.
-   pSmeBcnReportReq = vos_mem_malloc(sizeof( tSirBeaconReportReqInd ));
+   pSmeBcnReportReq = vos_mem_malloc(sizeof( tSirBeaconReportReqInd ) + num_channels);
    if ( NULL == pSmeBcnReportReq )
    {
       limLog( pMac, LOGP,
@@ -652,16 +647,19 @@ rrmProcessBeaconReportReq( tpAniSirGlobal pMac,
 
    }
 
-   vos_mem_set(pSmeBcnReportReq,sizeof( tSirBeaconReportReqInd ),0);
+   vos_mem_set(pSmeBcnReportReq,sizeof( tSirBeaconReportReqInd ) + num_channels,0);
 
 #if defined WLAN_VOWIFI_DEBUG
    PELOGE(limLog( pMac, LOGE, FL(" Allocated memory for pSmeBcnReportReq....will be freed by other module") );)
 #endif
    vos_mem_copy(pSmeBcnReportReq->bssId, pSessionEntry->bssId, sizeof(tSirMacAddr));
    pSmeBcnReportReq->messageType = eWNI_SME_BEACON_REPORT_REQ_IND;
-   pSmeBcnReportReq->length = sizeof( tSirBeaconReportReqInd );
+   pSmeBcnReportReq->length = sizeof( tSirBeaconReportReqInd ) + num_channels;
    pSmeBcnReportReq->uDialogToken = pBeaconReq->measurement_token;
+   //pSmeBcnReportReq->measurementDuration = SYS_TU_TO_MS(pBeaconReq->measurement_request.Beacon.meas_duration);
+   pSmeBcnReportReq->measurementDuration = SYS_TU_TO_MS(measDuration /*pBeaconReq->measurement_request.Beacon.meas_duration*/);
    pSmeBcnReportReq->randomizationInterval = SYS_TU_TO_MS (pBeaconReq->measurement_request.Beacon.randomization);
+   pSmeBcnReportReq->fMeasurementtype = pBeaconReq->measurement_request.Beacon.meas_mode;
    pSmeBcnReportReq->channelInfo.regulatoryClass = pBeaconReq->measurement_request.Beacon.regClass;
    pSmeBcnReportReq->channelInfo.channelNum = pBeaconReq->measurement_request.Beacon.channel;
    vos_mem_copy(pSmeBcnReportReq->macaddrBssid, pBeaconReq->measurement_request.Beacon.BSSID,
@@ -680,8 +678,7 @@ rrmProcessBeaconReportReq( tpAniSirGlobal pMac,
    pSmeBcnReportReq->channelList.numChannels = num_channels;
    if( pBeaconReq->measurement_request.Beacon.num_APChannelReport )
    {
-     tANI_U16 index2 = 0;
-     tANI_U8 *pChanList = pSmeBcnReportReq->channelList.channelNumber;
+      tANI_U8 *pChanList = pSmeBcnReportReq->channelList.channelNumber;
       for( num_APChanReport = 0 ; num_APChanReport < pBeaconReq->measurement_request.Beacon.num_APChannelReport ; num_APChanReport++ )
       {
          vos_mem_copy(pChanList,
@@ -689,11 +686,6 @@ rrmProcessBeaconReportReq( tpAniSirGlobal pMac,
           pBeaconReq->measurement_request.Beacon.APChannelReport[num_APChanReport].num_channelList);
 
          pChanList += pBeaconReq->measurement_request.Beacon.APChannelReport[num_APChanReport].num_channelList;
-         for( index = 0; index < (pBeaconReq->measurement_request.Beacon.APChannelReport[num_APChanReport].num_channelList); index++ )
-         {
-            pSmeBcnReportReq->measurementDuration[index2] = SYS_TU_TO_MS(measDuration);
-            pSmeBcnReportReq->fMeasurementtype[index2++] = pBeaconReq->measurement_request.Beacon.meas_mode;
-         }
       }
    }
 
@@ -808,8 +800,8 @@ rrmProcessBeaconReportXmit( tpAniSirGlobal pMac,
                             tpSirBeaconReportXmitInd pBcnReport)
 {
    tSirRetStatus status = eSIR_SUCCESS;
-   tSirMacRadioMeasureReport *pReport = NULL;
-   tpRRMReq pCurrentReq = pMac->rrm.rrmPEContext.pCurrentReq;
+   tSirMacRadioMeasureReport *pReport;
+   tpRRMReq pCurrentReq = pMac->rrm.rrmPEContext.pCurrentReq; 
    tpPESession pSessionEntry ;
    tANI_U8 sessionId;
    v_U8_t flagBSSPresent = FALSE, bssDescCnt = 0;
@@ -833,54 +825,48 @@ rrmProcessBeaconReportXmit( tpAniSirGlobal pMac,
       return eSIR_FAILURE;
    }
 
-   if( (pBcnReport->numBssDesc) ||
-       (!pBcnReport->numBssDesc && pCurrentReq->sendEmptyBcnRpt) )
+   if (NULL == (pSessionEntry = peFindSessionByBssid(pMac,
+                                                     pBcnReport->bssId,
+                                                     &sessionId)))
    {
-      pBcnReport->numBssDesc = (pBcnReport->numBssDesc == RRM_BCN_RPT_NO_BSS_INFO)?
-                               RRM_BCN_RPT_MIN_RPT : pBcnReport->numBssDesc;
+      PELOGE(limLog(pMac, LOGE,FL("session does not exist for given bssId"));)
+      return eSIR_FAILURE;
+   }
 
-      if (NULL == (pSessionEntry = peFindSessionByBssid(pMac,
-                                                        pBcnReport->bssId,
-                                                        &sessionId)))
-      {
-         PELOGE(limLog(pMac, LOGE, FL("session does not exist for given bssId"));)
-         return eSIR_FAILURE;
-      }
+   pReport = vos_mem_malloc(pBcnReport->numBssDesc *
+                           sizeof(tSirMacRadioMeasureReport));
 
-      pReport = vos_mem_malloc(pBcnReport->numBssDesc *
-                              sizeof(tSirMacRadioMeasureReport));
+   if (NULL == pReport)
+   {
+      PELOGE(limLog(pMac, LOGE,FL("RRM Report is NULL, allocation failed"));)
+      return eSIR_FAILURE;
+   }
 
-      if (NULL == pReport)
-      {
-         PELOGE(limLog(pMac, LOGE, FL("RRM Report is NULL, allocation failed"));)
-         return eSIR_FAILURE;
-      }
+   vos_mem_zero( pReport,
+                 pBcnReport->numBssDesc * sizeof(tSirMacRadioMeasureReport) );
 
-      vos_mem_zero( pReport,
-                    pBcnReport->numBssDesc * sizeof(tSirMacRadioMeasureReport) );
+   for (bssDescCnt = 0; bssDescCnt < pBcnReport->numBssDesc; bssDescCnt++)
+   {
+       //Prepare the beacon report and send it to the peer.
+       pReport[bssDescCnt].token = pBcnReport->uDialogToken;
+       pReport[bssDescCnt].refused = 0;
+       pReport[bssDescCnt].incapable = 0;
+       pReport[bssDescCnt].type = SIR_MAC_RRM_BEACON_TYPE;
 
-      for (bssDescCnt = 0; bssDescCnt < pBcnReport->numBssDesc; bssDescCnt++)
-      {
-         //Prepare the beacon report and send it to the peer.
-         pReport[bssDescCnt].token = pBcnReport->uDialogToken;
-         pReport[bssDescCnt].refused = 0;
-         pReport[bssDescCnt].incapable = 0;
-         pReport[bssDescCnt].type = SIR_MAC_RRM_BEACON_TYPE;
+       //If the scan result is NULL then send report request with
+       //option subelement as NULL..
+       if ( NULL != pBcnReport->pBssDescription[bssDescCnt] )
+       {
+           flagBSSPresent = TRUE;
+       }
 
-         //If the scan result is NULL then send report request with
-         //option subelement as NULL..
-         if ( NULL != pBcnReport->pBssDescription[bssDescCnt] )
-         {
-            flagBSSPresent = TRUE;
-         }
-
-         //Valid response is included if the size of beacon xmit
-         //is == size of beacon xmit ind + ies
-         if ( pBcnReport->length >= sizeof( tSirBeaconReportXmitInd ) )
-         {
-            pReport[bssDescCnt].report.beaconReport.regClass =  pBcnReport->regClass;
-            if ( flagBSSPresent )
-            {
+       //Valid response is included if the size of beacon xmit
+       //is == size of beacon xmit ind + ies
+       if ( pBcnReport->length >= sizeof( tSirBeaconReportXmitInd ) )
+       {
+           pReport[bssDescCnt].report.beaconReport.regClass =  pBcnReport->regClass;
+           if ( flagBSSPresent )
+           {
                pReport[bssDescCnt].report.beaconReport.channel =
                                  pBcnReport->pBssDescription[bssDescCnt]->channelId;
                vos_mem_copy( pReport[bssDescCnt].report.beaconReport.measStartTime,
@@ -902,10 +888,10 @@ rrmProcessBeaconReportXmit( tpAniSirGlobal pMac,
                vos_mem_copy( pReport[bssDescCnt].report.beaconReport.bssid,
                              pBcnReport->pBssDescription[bssDescCnt]->bssId,
                              sizeof(tSirMacAddr));
-            }
+           }
 
-            switch ( pCurrentReq->request.Beacon.reportingDetail )
-            {
+           switch ( pCurrentReq->request.Beacon.reportingDetail )
+           {
                case BEACON_REPORTING_DETAIL_NO_FF_IE:
                //0 No need to include any elements.
 #if defined WLAN_VOWIFI_DEBUG
@@ -947,20 +933,16 @@ rrmProcessBeaconReportXmit( tpAniSirGlobal pMac,
                       pBcnReport->pBssDescription[bssDescCnt] );
                }
                break;
-            }
-         }
-      }
-
-      limLog( pMac, LOG1, "Sending Action frame with %d bss info", bssDescCnt);
-      limSendRadioMeasureReportActionFrame( pMac,
-                                            pCurrentReq->dialog_token,
-                                            bssDescCnt,
-                                            pReport,
-                                            pBcnReport->bssId,
-                                            pSessionEntry );
-
-      pCurrentReq->sendEmptyBcnRpt = false;
+          }
+       }
    }
+
+#if defined WLAN_VOWIFI_DEBUG
+   PELOGE(limLog( pMac, LOGE, "Sending Action frame ");)
+#endif
+   limSendRadioMeasureReportActionFrame( pMac, pCurrentReq->dialog_token, bssDescCnt,
+            pReport, pBcnReport->bssId, pSessionEntry );
+
 
    if( pBcnReport->fMeasureDone )
    {
@@ -969,8 +951,7 @@ rrmProcessBeaconReportXmit( tpAniSirGlobal pMac,
       rrmCleanup(pMac);
    }
 
-   if( NULL != pReport )
-      vos_mem_free(pReport);
+   vos_mem_free(pReport);
 
    return status;
 }
@@ -1143,7 +1124,6 @@ rrmProcessRadioMeasurementRequest( tpAniSirGlobal pMac,
                 vos_mem_set(pCurrentReq, sizeof( *pCurrentReq ), 0);
                pCurrentReq->dialog_token = pRRMReq->DialogToken.token;
                pCurrentReq->token = pRRMReq->MeasurementRequest[i].measurement_token;
-               pCurrentReq->sendEmptyBcnRpt = true;
                pMac->rrm.rrmPEContext.pCurrentReq = pCurrentReq;
                rrmStatus = rrmProcessBeaconReportReq( pMac, pCurrentReq, &pRRMReq->MeasurementRequest[i], pSessionEntry );
                if (eRRM_SUCCESS != rrmStatus)
